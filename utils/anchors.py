@@ -4,7 +4,6 @@ from tensorflow import keras
 
 from utils.compute_overlap import compute_overlap
 
-
 class AnchorParameters:
     """
     The parameters that define how anchors are generated.

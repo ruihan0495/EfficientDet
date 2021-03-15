@@ -37,10 +37,14 @@ class CocoGenerator(Generator):
         """
         self.data_dir = data_dir
         self.set_name = set_name
+        '''
         if set_name in ['train2017', 'val2017']:
             self.coco = COCO(os.path.join(data_dir, 'annotations', 'instances_' + set_name + '.json'))
         else:
             self.coco = COCO(os.path.join(data_dir, 'annotations', 'image_info_' + set_name + '.json'))
+        '''
+        # For DeepFashin2Dataset sample_val
+        self.coco = COCO(os.path.join(data_dir, 'deepfashion2.json')) 
         self.image_ids = self.coco.getImgIds()
 
         self.load_classes()
@@ -126,7 +130,8 @@ class CocoGenerator(Generator):
         """
         # {'license': 2, 'file_name': '000000259765.jpg', 'coco_url': 'http://images.cocodataset.org/test2017/000000259765.jpg', 'height': 480, 'width': 640, 'date_captured': '2013-11-21 04:02:31', 'id': 259765}
         image_info = self.coco.loadImgs(self.image_ids[image_index])[0]
-        path = os.path.join(self.data_dir, 'images', self.set_name, image_info['file_name'])
+        #path = os.path.join(self.data_dir, 'images', self.set_name, image_info['file_name'])
+        path = os.path.join(self.data_dir, 'image', image_info['file_name'])
         image = cv2.imread(path)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         return image
