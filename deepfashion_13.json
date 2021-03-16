@@ -1,0 +1,54 @@
+{
+    "1": {
+      "id": 1,
+      "name": "short_sleeved_shirt"
+    },
+    "2": {
+      "id": 2,
+      "name": "long_sleeved_shirt"
+    },
+    "3": {
+        "id": 3,
+        "name": "short_sleeved_outwear"
+    },
+    "4": {
+        "id": 4,
+        "name": "long_sleeved_outwear"
+      },
+      "5": {
+        "id": 5,
+        "name": "vest"
+      },
+      "6": {
+        "id": 6,
+        "name": "sling"
+      },
+      "7": {
+        "id": 7,
+        "name": "shorts"
+      },
+      "8": {
+        "id": 8,
+        "name": "trousers"
+      },
+      "9": {
+        "id": 9,
+        "name": "skirt"
+      },
+      "10": {
+        "id": 10,
+        "name": "short_sleeved_dress"
+      },
+      "11": {
+        "id": 11,
+        "name": "long_sleeved_dress"
+      },
+      "12": {
+        "id": 12,
+        "name": "vest_dress"
+      },
+      "13": {
+        "id": 13,
+        "name": "sling_dress"
+      }
+}

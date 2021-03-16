@@ -1,6 +1,7 @@
 # import keras
 import numpy as np
 from tensorflow import keras
+import tensorflow as tf
 
 from utils.compute_overlap import compute_overlap
 
@@ -47,7 +48,8 @@ def anchor_targets_bbox(
         num_classes,
         negative_overlap=0.4,
         positive_overlap=0.5,
-        detect_quadrangle=False
+        detect_quadrangle=False,
+        mask_shape=[28,28]
 ):
     """
     Generate anchor targets for bbox detection.
@@ -84,6 +86,8 @@ def anchor_targets_bbox(
     else:
         regression_batch = np.zeros((batch_size, anchors.shape[0], 4 + 1), dtype=np.float32)
     labels_batch = np.zeros((batch_size, anchors.shape[0], num_classes + 1), dtype=np.float32)
+    #mask_batch = np.zeros((batch_size, anchors.shape[0], mask_shape[0], mask_shape[1]), dtype=np.float32)
+    mask_batch = tf.zeros((batch_size, anchors.shape[0], mask_shape[0], mask_shape[1]), dtype=tf.float32)
 
     # compute labels and regression targets
     for index, (image, annotations) in enumerate(zip(image_group, annotations_group)):
@@ -100,7 +104,7 @@ def anchor_targets_bbox(
 
             regression_batch[index, ignore_indices, -1] = -1
             regression_batch[index, positive_indices, -1] = 1
-
+            
             # compute target class labels
             labels_batch[
                 index, positive_indices, annotations['labels'][argmax_overlaps_inds[positive_indices]].astype(int)] = 1
@@ -109,6 +113,35 @@ def anchor_targets_bbox(
             if detect_quadrangle:
                 regression_batch[index, :, 4:8] = annotations['alphas'][argmax_overlaps_inds, :]
                 regression_batch[index, :, 8] = annotations['ratios'][argmax_overlaps_inds]
+            # reshape masks to target mask shape
+            # write a function similar to bbox_transform
+            print(len(argmax_overlaps_inds))
+            roi_masks = annotations['masks'][argmax_overlaps_inds[positive_indices], :, :]
+            boxes = regression_batch[index][positive_indices][:,:4]
+            box_ids = tf.range(0, roi_masks.shape[0])
+    
+            roi_masks = tf.expand_dims(roi_masks, -1)
+            roi_masks = tf.image.crop_and_resize(tf.cast(roi_masks, tf.float32), 
+                                                boxes,
+                                                box_ids,
+                                                mask_shape)
+            roi_masks = tf.squeeze(roi_masks, -1)
+            roi_masks = tf.round(roi_masks)
+
+            index_num = []
+            j = 0
+            for i in positive_indices:
+                if i:
+                    index_num.append(j)
+                j+=1
+
+            indices = [[index, i] for i in index_num]
+
+            tf.tensor_scatter_nd_update(mask_batch, indices, roi_masks)
+            print(roi_masks.shape)
+  
+            #mask_batch[index, positive_indices, :, :] = roi_masks
+            
 
         # ignore anchors outside of image
         if image.shape:
@@ -118,7 +151,7 @@ def anchor_targets_bbox(
             labels_batch[index, indices, -1] = -1
             regression_batch[index, indices, -1] = -1
 
-    return labels_batch, regression_batch
+    return labels_batch, regression_batch, mask_batch
 
 
 def compute_gt_annotations(
@@ -327,6 +360,8 @@ def generate_anchors(base_size=16, ratios=None, scales=None):
 
 
 def bbox_transform(anchors, gt_boxes, scale_factors=None):
+    print(" anchors shape", anchors.shape)
+    print(" gt_bboxes shape", gt_boxes.shape)
     wa = anchors[:, 2] - anchors[:, 0]
     ha = anchors[:, 3] - anchors[:, 1]
     cxa = anchors[:, 0] + wa / 2.
@@ -352,3 +387,18 @@ def bbox_transform(anchors, gt_boxes, scale_factors=None):
         tw /= scale_factors[3]
     targets = np.stack([ty, tx, th, tw], axis=1)
     return targets
+
+def mask_transform(anchors, gt_masks, scale_factors=None):
+    print("gt_masks shape", gt_masks.shape)
+    wa = anchors[:, 2] - anchors[:, 0]
+    ha = anchors[:, 3] - anchors[:, 1]
+    cxa = anchors[:, 0] + wa / 2.
+    cya = anchors[:, 1] + ha / 2.
+
+    w = gt_boxes[:, 2] - gt_boxes[:, 0]
+    h = gt_boxes[:, 3] - gt_boxes[:, 1]
+    cx = gt_boxes[:, 0] + w / 2.
+    cy = gt_boxes[:, 1] + h / 2.
+    
+
+    return 

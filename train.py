@@ -351,7 +351,7 @@ def main(args=None):
 
     # create the callbacks
     callbacks = create_callbacks(
-        model,
+        model, 
         prediction_model,
         validation_generator,
         args,

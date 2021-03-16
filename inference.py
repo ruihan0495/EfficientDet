@@ -13,14 +13,14 @@ from utils.draw_boxes import draw_boxes
 def main():
     os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
-    phi = 1
-    weighted_bifpn = True
-    model_path = 'efficientdet-d1.h5'
+    phi = 0
+    weighted_bifpn = False
+    model_path = 'checkpoints/2021-03-16/coco_02.h5'
     image_sizes = (512, 640, 768, 896, 1024, 1280, 1408)
     image_size = image_sizes[phi]
     # coco classes
-    classes = {value['id'] - 1: value['name'] for value in json.load(open('coco_90.json', 'r')).values()}
-    num_classes = 90
+    classes = {value['id'] - 1: value['name'] for value in json.load(open('deepfashion_13.json', 'r')).values()}
+    num_classes = 13
     score_threshold = 0.3
     colors = [np.random.randint(0, 256, 3).tolist() for _ in range(num_classes)]
     _, model = efficientdet(phi=phi,
@@ -28,8 +28,8 @@ def main():
                             num_classes=num_classes,
                             score_threshold=score_threshold)
     model.load_weights(model_path, by_name=True)
-
-    for image_path in glob.glob('datasets/VOC2007/JPEGImages/*.jpg'):
+    # 'datasets/VOC2007/JPEGImages/*.jpg'
+    for image_path in glob.glob('data/sample_val/image/000002.jpg'):
         image = cv2.imread(image_path)
         src_image = image.copy()
         # BGR -> RGB
@@ -53,9 +53,11 @@ def main():
 
         draw_boxes(src_image, boxes, scores, labels, colors, classes)
 
-        cv2.namedWindow('image', cv2.WINDOW_NORMAL)
-        cv2.imshow('image', src_image)
-        cv2.waitKey(0)
+        #cv2.namedWindow('image', cv2.WINDOW_NORMAL)
+        cv2.imwrite('results/image.jpg', src_image)
+        cv2.imread('results/image.jpg')
+        #cv2.imshow('image', src_image)
+        #cv2.waitKey(0)
 
 
 if __name__ == '__main__':

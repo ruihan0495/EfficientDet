@@ -419,6 +419,24 @@ def log2_graph(x):
     """Implementation of Log2. TF doesn't have a native implementation."""
     return tf.log(x) / tf.log(2.0)
 
+def clip_boxes_graph(boxes, window):
+    """
+    Clip the normalized boxes coordinate to the range of [0,1]
+    boxes: [N, (y1, x1, y2, x2)]
+    window: [4] in the form y1, x1, y2, x2
+    """
+    # Split
+    wy1, wx1, wy2, wx2 = tf.split(window, 4)
+    y1, x1, y2, x2 = tf.split(boxes, 4, axis=1)
+    # Clip
+    y1 = tf.maximum(tf.minimum(y1, wy2), wy1)
+    x1 = tf.maximum(tf.minimum(x1, wx2), wx1)
+    y2 = tf.maximum(tf.minimum(y2, wy2), wy1)
+    x2 = tf.maximum(tf.minimum(x2, wx2), wx1)
+    clipped = tf.concat([y1, x1, y2, x2], axis=1, name="clipped_boxes")
+    clipped.set_shape((clipped.shape[0], 4))
+    return clipped
+
 class ROIAlignLayer(layers.Layer):
     """Implements ROI Pooling on multiple levels of the feature pyramid.
     Params:
@@ -526,6 +544,56 @@ class ROIAlignLayer(layers.Layer):
         return input_shape[0][:2] + self.pool_shape + (input_shape[2][-1], )
 
 
+def build_fpn_mask_graph(rois, feature_maps, image_size,
+                         pool_size, num_classes, train_bn=True):
+    """Builds the computation graph of the mask head of Feature Pyramid Network.
+    rois: [batch, num_rois, (y1, x1, y2, x2)] Proposal boxes in normalized
+          coordinates.
+    feature_maps: List of feature maps from different layers of the pyramid,
+                  [P1, P2, P3, P4, P5]. Each has a different resolution.
+    image_meta: [batch, (meta data)] Image details. See compose_image_meta()
+    pool_size: The width of the square feature map generated from ROI Pooling.
+    num_classes: number of classes, which determines the depth of the results
+    train_bn: Boolean. Train or freeze Batch Norm layers
+    Returns: Masks [batch, num_rois, MASK_POOL_SIZE, MASK_POOL_SIZE, NUM_CLASSES]
+    """
+    # ROI Pooling
+    # Shape: [batch, num_rois, MASK_POOL_SIZE, MASK_POOL_SIZE, channels]
+    x = PyramidROIAlign([pool_size, pool_size],
+                        name="roi_align_mask")((rois, image_size, feature_maps))
+
+    # Conv layers
+    x = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same"),
+                           name="mrcnn_mask_conv1")(x)
+    x = KL.TimeDistributed(BatchNorm(),
+                           name='mrcnn_mask_bn1')(x, training=train_bn)
+    x = KL.Activation('relu')(x)
+
+    x = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same"),
+                           name="mrcnn_mask_conv2")(x)
+    x = KL.TimeDistributed(BatchNorm(),
+                           name='mrcnn_mask_bn2')(x, training=train_bn)
+    x = KL.Activation('relu')(x)
+
+    x = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same"),
+                           name="mrcnn_mask_conv3")(x)
+    x = KL.TimeDistributed(BatchNorm(),
+                           name='mrcnn_mask_bn3')(x, training=train_bn)
+    x = KL.Activation('relu')(x)
+
+    x = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same"),
+                           name="mrcnn_mask_conv4")(x)
+    x = KL.TimeDistributed(BatchNorm(),
+                           name='mrcnn_mask_bn4')(x, training=train_bn)
+    x = KL.Activation('relu')(x)
+
+    x = KL.TimeDistributed(KL.Conv2DTranspose(256, (2, 2), strides=2, activation="relu"),
+                           name="mrcnn_mask_deconv")(x)
+    x = KL.TimeDistributed(KL.Conv2D(num_classes, (1, 1), strides=1, activation="sigmoid"),
+                           name="mrcnn_mask")(x)
+    return x
+
+
 def efficientdet(phi, num_classes=20, num_anchors=9, weighted_bifpn=False, freeze_bn=False,
                  score_threshold=0.01, detect_quadrangle=False, anchor_parameters=None, separable_conv=True):
     assert phi in range(7)
@@ -554,12 +622,19 @@ def efficientdet(phi, num_classes=20, num_anchors=9, weighted_bifpn=False, freez
     classification = layers.Concatenate(axis=1, name='classification')(classification)
     regression = [box_net([feature, i]) for i, feature in enumerate(fpn_features)]
     regression = layers.Concatenate(axis=1, name='regression')(regression)
+    # regression has shpae [batch, num_detections, 4]
+
+    # normalize regression boxes to extract rois
+    #norm_boxes = 
+    # clip the boxes within the range og [0,1]
+
     #print("box shape", regression.shape, fpn_features[0].shape)
 
-    roi_ins = (regression, input_size, fpn_features)
+    #roi_ins = (regression, input_size, fpn_features)
     #print(len(fpn_features), fpn_features[0].shape)
-    roi_layer = ROIAlignLayer([7,7])
-    roi_outs = roi_layer(roi_ins)
+    #roi_layer = ROIAlignLayer([7,7])
+    #roi_outs = roi_layer(roi_ins)
+    pool_rois = build_fpn_mask_graph(regression, fpn_features, input_size, 7, num_classes)
 
     model = models.Model(inputs=[image_input], outputs=[classification, regression], name='efficientdet')
 

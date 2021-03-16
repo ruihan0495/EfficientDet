@@ -18,6 +18,7 @@ from generators.common import Generator
 import os
 import numpy as np
 from pycocotools.coco import COCO
+from pycocotools import mask as maskUtils
 import cv2
 
 
@@ -46,6 +47,7 @@ class CocoGenerator(Generator):
         # For DeepFashin2Dataset sample_val
         self.coco = COCO(os.path.join(data_dir, 'deepfashion2.json')) 
         self.image_ids = self.coco.getImgIds()
+        self.image_sizes = {}
 
         self.load_classes()
 
@@ -80,7 +82,7 @@ class CocoGenerator(Generator):
     def num_classes(self):
         """ Number of classes in the dataset. For COCO this is 80.
         """
-        return 90
+        return 13
 
     def has_label(self, label):
         """ Return True if label is a known label.
@@ -124,12 +126,41 @@ class CocoGenerator(Generator):
         image = self.coco.loadImgs(self.image_ids[image_index])[0]
         return float(image['width']) / float(image['height'])
 
+    def annToRLE(self, ann, height, width):
+        """
+        Convert annotation which can be polygons, uncompressed RLE to RLE.
+        :return: binary mask (numpy 2D array)
+        """
+        segm = ann['segmentation']
+        if isinstance(segm, list):
+            # polygon -- a single object might consist of multiple parts
+            # we merge all parts into one mask rle code
+            rles = maskUtils.frPyObjects(segm, height, width)
+            rle = maskUtils.merge(rles)
+        elif isinstance(segm['counts'], list):
+            # uncompressed RLE
+            rle = maskUtils.frPyObjects(segm, height, width)
+        else:
+            # rle
+            rle = ann['segmentation']
+        return rle
+
+    def annToMask(self, ann, height, width):
+        """
+        Convert annotation which can be polygons, uncompressed RLE, or RLE to binary mask.
+        :return: binary mask (numpy 2D array)
+        """
+        rle = self.annToRLE(ann, height, width)
+        m = maskUtils.decode(rle)
+        return m
+
     def load_image(self, image_index):
         """
         Load an image at the image_index.
         """
         # {'license': 2, 'file_name': '000000259765.jpg', 'coco_url': 'http://images.cocodataset.org/test2017/000000259765.jpg', 'height': 480, 'width': 640, 'date_captured': '2013-11-21 04:02:31', 'id': 259765}
         image_info = self.coco.loadImgs(self.image_ids[image_index])[0]
+        self.image_sizes[self.image_ids[image_index]] = (image_info['height'], image_info['width'])
         #path = os.path.join(self.data_dir, 'images', self.set_name, image_info['file_name'])
         path = os.path.join(self.data_dir, 'image', image_info['file_name'])
         image = cv2.imread(path)
@@ -141,7 +172,9 @@ class CocoGenerator(Generator):
         """
         # get ground truth annotations
         annotations_ids = self.coco.getAnnIds(imgIds=self.image_ids[image_index], iscrowd=False)
-        annotations = {'labels': np.empty((0,), dtype=np.float32), 'bboxes': np.empty((0, 4), dtype=np.float32)}
+        h, w = self.image_sizes[self.image_ids[image_index]]
+        annotations = {'labels': np.empty((0,), dtype=np.float32), 'bboxes': np.empty((0, 4), dtype=np.float32),
+                       'masks': np.empty((0, h, w), dtype=bool)}
 
         # some images appear to miss annotations (like image with id 257034)
         if len(annotations_ids) == 0:
@@ -153,7 +186,8 @@ class CocoGenerator(Generator):
             # some annotations have basically no width / height, skip them
             if a['bbox'][2] < 1 or a['bbox'][3] < 1:
                 continue
-
+            annotations['masks'] = np.concatenate([annotations['masks'],[
+                self.annToMask(a, h, w)]], axis=0)
             annotations['labels'] = np.concatenate(
                 [annotations['labels'], [a['category_id'] - 1]], axis=0)
             annotations['bboxes'] = np.concatenate([annotations['bboxes'], [[

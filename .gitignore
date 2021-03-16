@@ -114,3 +114,4 @@ tests/
 *test-dev*
 val2017*
 *.txt
+results/
