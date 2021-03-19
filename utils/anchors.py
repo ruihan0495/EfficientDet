@@ -2,6 +2,7 @@
 import numpy as np
 from tensorflow import keras
 import tensorflow as tf
+from config import Config
 
 from utils.compute_overlap import compute_overlap
 
@@ -86,8 +87,7 @@ def anchor_targets_bbox(
     else:
         regression_batch = np.zeros((batch_size, anchors.shape[0], 4 + 1), dtype=np.float32)
     labels_batch = np.zeros((batch_size, anchors.shape[0], num_classes + 1), dtype=np.float32)
-    #mask_batch = np.zeros((batch_size, anchors.shape[0], mask_shape[0], mask_shape[1]), dtype=np.float32)
-    mask_batch = tf.zeros((batch_size, anchors.shape[0], mask_shape[0], mask_shape[1]), dtype=tf.float32)
+    #mask_batch = tf.zeros((batch_size, anchors.shape[0], mask_shape[0], mask_shape[1]), dtype=tf.float32)
 
     # compute labels and regression targets
     for index, (image, annotations) in enumerate(zip(image_group, annotations_group)):
@@ -115,7 +115,7 @@ def anchor_targets_bbox(
                 regression_batch[index, :, 8] = annotations['ratios'][argmax_overlaps_inds]
             # reshape masks to target mask shape
             # write a function similar to bbox_transform
-            print(len(argmax_overlaps_inds))
+            '''
             roi_masks = annotations['masks'][argmax_overlaps_inds[positive_indices], :, :]
             boxes = regression_batch[index][positive_indices][:,:4]
             box_ids = tf.range(0, roi_masks.shape[0])
@@ -137,11 +137,14 @@ def anchor_targets_bbox(
 
             indices = [[index, i] for i in index_num]
 
-            tf.tensor_scatter_nd_update(mask_batch, indices, roi_masks)
-            print(roi_masks.shape)
+            #mask_batch = tf.tensor_scatter_nd_update(mask_batch, indices, roi_masks)
+            #mask_batch = mask_batch.numpy()
+            #print(roi_masks.shape)
+            # target_class_ids [batch, num_anchors]
+            #print(argmax_overlaps_inds.shape)
   
             #mask_batch[index, positive_indices, :, :] = roi_masks
-            
+        '''
 
         # ignore anchors outside of image
         if image.shape:
@@ -151,7 +154,7 @@ def anchor_targets_bbox(
             labels_batch[index, indices, -1] = -1
             regression_batch[index, indices, -1] = -1
 
-    return labels_batch, regression_batch, mask_batch
+    return labels_batch, regression_batch
 
 
 def compute_gt_annotations(
@@ -360,8 +363,6 @@ def generate_anchors(base_size=16, ratios=None, scales=None):
 
 
 def bbox_transform(anchors, gt_boxes, scale_factors=None):
-    print(" anchors shape", anchors.shape)
-    print(" gt_bboxes shape", gt_boxes.shape)
     wa = anchors[:, 2] - anchors[:, 0]
     ha = anchors[:, 3] - anchors[:, 1]
     cxa = anchors[:, 0] + wa / 2.

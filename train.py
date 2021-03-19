@@ -32,8 +32,9 @@ from tensorflow.keras.optimizers import Adam, SGD
 from augmentor.color import VisualEffect
 from augmentor.misc import MiscEffect
 from model import efficientdet
-from losses import smooth_l1, focal, smooth_l1_quad
+from losses import smooth_l1, focal, smooth_l1_quad, mask_loss
 from efficientnet import BASE_WEIGHTS_PATH, WEIGHTS_HASHES
+from config import Config
 
 
 def makedirs(path):
@@ -363,6 +364,7 @@ def main(args=None):
         raise ValueError('When you have no validation data, you should not specify --compute-val-loss.')
 
     # start training
+    '''
     return model.fit_generator(
         generator=train_generator,
         steps_per_epoch=args.steps,
@@ -374,6 +376,19 @@ def main(args=None):
         use_multiprocessing=args.multiprocessing,
         max_queue_size=args.max_queue_size,
         validation_data=validation_generator
+    )'''
+
+    return model.fit_generator(
+        generator=train_generator,
+        steps_per_epoch=args.steps,
+        initial_epoch=0,
+        epochs=args.epochs,
+        verbose=1,
+        callbacks=callbacks,
+        workers=args.workers,
+        use_multiprocessing=args.multiprocessing,
+        max_queue_size=args.max_queue_size,
+        validation_data=None
     )
 
 
