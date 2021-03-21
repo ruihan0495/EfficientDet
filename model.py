@@ -16,11 +16,12 @@ from tfkeras import EfficientNetB0, EfficientNetB1, EfficientNetB2
 from tfkeras import EfficientNetB3, EfficientNetB4, EfficientNetB5, EfficientNetB6
 
 from layers import ClipBoxes, RegressBoxes, FilterDetections, wBiFPNAdd, BatchNormalization
-from layers import bbox_transform_inv
+from layers import DetectionLayer
 from initializers import PriorProbability
 from utils.anchors import anchors_for_shape, anchor_targets_bbox, AnchorParameters
 import numpy as np
 from utils.graph_funcs import trim_zeros_graph, overlaps_graph, batch_slice
+from utils.graph_funcs import norm_boxes_graph, denorm_boxes_graph
 from losses import focal, smooth_l1
 
 w_bifpns = [64, 88, 112, 160, 224, 288, 384]
@@ -42,6 +43,13 @@ AnchorParameters.default = AnchorParameters(
 ANCHOR_PARAMETERS = AnchorParameters.default
 MAX_INSTANCES = 100
 TRAIN_ROIS_PER_IMAGE = 200
+DETECTION_MAX_INSTANCES = 100
+# Minimum probability value to accept a detected instance
+# ROIs below this threshold are skipped
+DETECTION_MIN_CONFIDENCE = 0.7
+
+# Non-maximum suppression threshold for detection
+DETECTION_NMS_THRESHOLD = 0.3
 
 def SeparableConvBlock(num_channels, kernel_size, strides, name, freeze_bn=False):
     f1 = KL.SeparableConv2D(num_channels, kernel_size=kernel_size, strides=strides, padding='same',
@@ -433,23 +441,7 @@ def log2_graph(x):
     """Implementation of Log2. TF doesn't have a native implementation."""
     return tf.log(x) / tf.log(2.0)
 
-def clip_boxes_graph(boxes, window):
-    """
-    Clip the normalized boxes coordinate to the range of [0,1]
-    boxes: [N, (y1, x1, y2, x2)]
-    window: [4] in the form y1, x1, y2, x2
-    """
-    # Split
-    wy1, wx1, wy2, wx2 = tf.split(window, 4)
-    y1, x1, y2, x2 = tf.split(boxes, 4, axis=1)
-    # Clip
-    y1 = tf.maximum(tf.minimum(y1, wy2), wy1)
-    x1 = tf.maximum(tf.minimum(x1, wx2), wx1)
-    y2 = tf.maximum(tf.minimum(y2, wy2), wy1)
-    x2 = tf.maximum(tf.minimum(x2, wx2), wx1)
-    clipped = tf.concat([y1, x1, y2, x2], axis=1, name="clipped_boxes")
-    clipped.set_shape((clipped.shape[0], 4))
-    return clipped
+
 
 class BatchNorm(KL.BatchNormalization):
     """Extends the Keras BatchNormalization class to allow a central place
@@ -883,6 +875,7 @@ def mrcnn_mask_loss_graph(target_masks, target_class_ids, pred_masks):
     return loss
 
 
+
 class EfficientDetModel():
     def __init__(self, phi):
         assert phi in range(7)
@@ -924,6 +917,7 @@ class EfficientDetModel():
         regression = [box_net([feature, i]) for i, feature in enumerate(fpn_features)]
         regression = KL.Concatenate(axis=1, name='regression')(regression)
         # regression has shpae [batch, num_detections, 4]
+        print("classification shape", classification.shape)
 
         # apply predicted regression to anchors
         anchors = anchors_for_shape((self.input_size, self.input_size), anchor_params=anchor_parameters)
@@ -936,10 +930,30 @@ class EfficientDetModel():
         boxes = RegressBoxes(name='boxes')([anchors_input, regression[..., :4]])
         boxes = ClipBoxes(name='clipped_boxes')([image_input, boxes])
         
+        # filter detections (apply NMS / score threshold / select top-k)
+        if detect_quadrangle:
+            detections = FilterDetections(
+                name='filtered_detections',
+                score_threshold=score_threshold,
+                detect_quadrangle=True
+            )([boxes, classification, regression[..., 4:8], regression[..., 8]])
+        else:
+            detections = FilterDetections(
+                name='filtered_detections',
+                score_threshold=score_threshold
+            )([boxes, classification])
+
+        #norm_boxes = DetectionLayer(DETECTION_MIN_CONFIDENCE, DETECTION_MAX_INSTANCES, DETECTION_NMS_THRESHOLD)([boxes, classification])
+
+        output_boxes = detections[0]
+        norm_boxes = norm_boxes_graph(output_boxes, K.shape(image_input)[1:3])
+        roi_masks = build_fpn_mask_graph(norm_boxes, fpn_features, self.input_size, 13, 7) #[batch, num_proposals,h,w,num_classes]
+        print("shape of roi_masks", roi_masks.shape)
+        
         # apply nms on boxes???
         # predict masks base on boxes
         # TODO: normalize regression, nms on regression
-        roi_masks = build_fpn_mask_graph(regression, fpn_features, self.input_size, 13, 7) #[batch, num_proposals,h,w,num_classes]
+       
         # TODO: generate target TRAIN_ROIS_PER_IMAGE rois 
         #target_rois = .. shape[batch, num_rois, 4]
         target_rois = KL.Input((100, 4))
@@ -961,18 +975,6 @@ class EfficientDetModel():
                                         [target_mask, target_class_ids, roi_masks])  
 
 
-        # filter detections (apply NMS / score threshold / select top-k)
-        if detect_quadrangle:
-            detections = FilterDetections(
-                name='filtered_detections',
-                score_threshold=score_threshold,
-                detect_quadrangle=True
-            )([boxes, classification, regression[..., 4:8], regression[..., 8]])
-        else:
-            detections = FilterDetections(
-                name='filtered_detections',
-                score_threshold=score_threshold
-            )([boxes, classification])
 
         model = models.Model(inputs=[image_input, box_target, class_target], 
                              outputs=[classification, regression,roi_masks], name='efficientdet')
