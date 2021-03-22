@@ -12,6 +12,7 @@ from tensorflow.keras import layers as KL
 from tensorflow.keras import initializers
 from tensorflow.keras import models
 from tensorflow.keras import backend as K
+from tensorflow.keras.optimizers import Adam, SGD
 from tfkeras import EfficientNetB0, EfficientNetB1, EfficientNetB2
 from tfkeras import EfficientNetB3, EfficientNetB4, EfficientNetB5, EfficientNetB6
 
@@ -567,7 +568,7 @@ class ROIAlignLayer(KL.Layer):
         return input_shape[0][:2] + self.pool_shape + (input_shape[2][-1], )
 
 
-def build_bbox_target(annotations_group, num_classes, image_size,
+def build_bbox_target(annotations_group, image_group, num_classes, image_size,
                       detect_quadrangle=False, anchor_parameters=ANCHOR_PARAMETERS):
     '''
     Build classification and regression targets for bboxes.
@@ -723,7 +724,7 @@ class DetectionTargetLayer(KL.Layer):
     def compute_mask(self, inputs, mask=None):
         return [None, None, None, None]
 
-def data_generator(dataset, config, shuffle=True, phi=0,
+def data_generator(dataset, shuffle=True, phi=0,
                    batch_size=1, mask_shape=[28, 28]):
     '''
     '''
@@ -746,37 +747,40 @@ def data_generator(dataset, config, shuffle=True, phi=0,
             if shuffle and image_index == 0:
                 np.random.shuffle(image_ids)
 
-            images, annotations_group = dataset.compute_inputs_targets(group)
+            temp_images, annotations_group = dataset.compute_inputs_targets(group)
+            # TODO: use map function to make this more efficient
+            images = []
+            for image in temp_images:
+                images.append(np.squeeze(image, axis=0))
             
             # Skip images that have no instances. This can happen in cases
             # where we train on a subset of classes and the image doesn't
             # have any of the classes we care about.
-            if not np.any(annotations_group['labels'] > 0):
-                continue
+            #if not np.any(annotations_group['labels'] > 0):
+            #    continue
 
             # first stage bbox Targets
             image_size = image_sizes[phi]
-            outs = build_bbox_target(annotations_group, num_classes, image_size, detect_quadrangle=False)
-            targets = []
+            outs = build_bbox_target(annotations_group, images, num_classes, image_size, detect_quadrangle=False)
 
             # mask targets [batch, max_instances, 28, 28] and second state bbox targets [batch, max_instaces, 4]
             masks_batch = np.zeros((batch_size, MAX_INSTANCES, mask_shape[0], mask_shape[1]), dtype=np.float32)
             boxes_batch = np.zeros((batch_size, MAX_INSTANCES, 4), dtype=np.float32)
             labels_batch = np.zeros((batch_size, MAX_INSTANCES), dtype=np.float32)
             for index, annotations in enumerate(annotations_group):
-                gt_masks = annotations['masks']
+                # TODO: reshape annotation['masks'] into [num_instances, 28, 28]
+                #gt_masks = annotations['masks']
                 gt_boxes = annotations['bboxes']
                 gt_labels = annotations['labels']
                 # TODO: normalize gt_boxes np
-                masks_batch[index, :gt_masks.shape[0], :, :] = gt_masks
+                #masks_batch[index, :gt_masks.shape[0], :, :] = gt_masks
                 boxes_batch[index, :gt_boxes.shape[0], :] = gt_boxes
-                labels_batch[index, :gt_labels.shape[0], :] = gt_labels
-            targets.extend([masks_batch, boxes_batch, labels_batch])
+                labels_batch[index, :gt_labels.shape[0]] = gt_labels
+            inputs = [images, outs[0], outs[1], masks_batch, boxes_batch, labels_batch]
+            targets = []
 
-
-            inputs = images.extend(outs)
             outputs = targets
-             
+            print("load images shape", images[0].shape)
             yield inputs, outputs
 
             # start a new batch
@@ -887,12 +891,12 @@ class EfficientDetModel():
         self.w_head = self.w_bifpn
         self.d_head = d_heads[phi]
         self.backbone_cls = backbones[phi]
-        self.model = self.efficientdet()
+        self.model, self.p_model = self.efficientdet()
 
     def efficientdet(self, num_classes=13, num_anchors=9, weighted_bifpn=False, freeze_bn=False,
                     score_threshold=0.01, detect_quadrangle=False, anchor_parameters=None, separable_conv=True,
                     mask_shape=[28,28]):
-        image_input = KL.Input(self.input_shape)
+        image_input = KL.Input(self.input_shape, name="image_input")
         '''
         w_bifpn = w_bifpns[phi]
         d_bifpn = d_bifpns[phi]
@@ -947,7 +951,7 @@ class EfficientDetModel():
 
         output_boxes = detections[0]
         norm_boxes = norm_boxes_graph(output_boxes, K.shape(image_input)[1:3])
-        roi_masks = build_fpn_mask_graph(norm_boxes, fpn_features, self.input_size, 13, 7) #[batch, num_proposals,h,w,num_classes]
+        roi_masks = build_fpn_mask_graph(norm_boxes, fpn_features, self.input_size, 13, 14) #[batch, num_proposals,h,w,num_classes]
         print("shape of roi_masks", roi_masks.shape)
         
         # apply nms on boxes???
@@ -956,17 +960,17 @@ class EfficientDetModel():
        
         # TODO: generate target TRAIN_ROIS_PER_IMAGE rois 
         #target_rois = .. shape[batch, num_rois, 4]
-        target_rois = KL.Input((100, 4))
+        #target_rois = KL.Input((100, 4))
 
-        gt_masks = KL.Input((MAX_INSTANCES, mask_shape[0], mask_shape[1]))
-        gt_boxes = KL.Input((MAX_INSTANCES, 4))
-        gt_labels = KL.Input((MAX_INSTANCES))
+        gt_masks = KL.Input((MAX_INSTANCES, mask_shape[0], mask_shape[1]), name="gt_masks")
+        gt_boxes = KL.Input((MAX_INSTANCES, 4), name="gt_boxes")
+        gt_labels = KL.Input((MAX_INSTANCES), name="gt_labels")
 
         rois, target_class_ids, target_mask = DetectionTargetLayer(name="proposal_targets")([
-                    target_rois, gt_labels, gt_boxes, gt_masks])
+                    norm_boxes, gt_labels, gt_boxes, gt_masks])
 
         # build losses
-        output_rois = KL.Lambda(lambda x: x * 1, name="output_rois")(rois)
+        #output_rois = KL.Lambda(lambda x: x * 1, name="output_rois")(rois)
 
         # Losses
         regression_loss = KL.Lambda(lambda x: focal(*x), name="regression_loss")([box_target, regression])     
@@ -976,14 +980,14 @@ class EfficientDetModel():
 
 
 
-        model = models.Model(inputs=[image_input, box_target, class_target], 
-                             outputs=[classification, regression,roi_masks], name='efficientdet')
-        prediction_model = models.Model(inputs=[image_input, box_target, class_target], 
+        model = models.Model(inputs=[image_input, class_target, box_target, gt_masks, gt_boxes, gt_labels], 
+                             outputs=[classification, regression, roi_masks, 
+                                      regression_loss, classification_loss, mask_loss], name='efficientdet')
+        prediction_model = models.Model(inputs=[image_input], 
                                         outputs=detections, name='efficientdet_p')
         return model, prediction_model
 
     def compile(self,learning_rate=1e-3):
-        self.model.compile(optimizer=Adam(lr=1e-3))
         # compile losses
         self.model._losses = []
         self.model._per_input_losses = {}
@@ -1016,10 +1020,10 @@ class EfficientDetModel():
             if name in self.model.metrics_names:
                 continue
             layer = self.model.get_layer(name)
-            self.keras_model.metrics_names.append(name)
             loss = (
                 tf.reduce_mean(layer.output, keepdims=True))
-            self.model.metrics_tensors.append(loss)
+            self.model.add_metric(loss, aggregation='mean', name=name)
+            
 
 
     def create_callbacks(self, training_model, prediction_model, validation_generator, args):
@@ -1097,24 +1101,25 @@ class EfficientDetModel():
 
         return callbacks
 
-    def train(self, train_dataset, val_dataset, learning_rate, epochs,
-              config, custom_callbacks=None):
+    def train(self, train_dataset, learning_rate, epochs,
+              args, val_dataset=None, custom_callbacks=None):
         # Data generators
-        train_generator = data_generator(train_dataset, config, shuffle=True,
+        train_generator = data_generator(train_dataset, shuffle=True,
                                          phi=self.phi, batch_size=1)
-        val_generator = data_generator(val_dataset, config, shuffle=True,
-                                       batch_size=1, phi=self.phi)
+        '''
+        val_generator = data_generator(val_dataset, shuffle=True,
+                                       batch_size=1, phi=self.phi)'''
 
         # Create log_dir if it does not exist
-        if not os.path.exists(config.log_dir):
-            os.makedirs(config.log_dir)
+        if not os.path.exists(args.log_dir):
+            os.makedirs(args.log_dir)
 
         # Callbacks
         callbacks = [
-            keras.callbacks.TensorBoard(log_dir=config.log_dir,
+            keras.callbacks.TensorBoard(log_dir=args.log_dir,
                                         histogram_freq=0, write_graph=True, write_images=False),
             keras.callbacks.ModelCheckpoint(os.path.join(
-                                            config.checkpoint_path,
+                                            args.checkpoint_path,
                                             f'{args.dataset_type}_{{epoch:02d}}_{{loss:.4f}}_{{val_loss:.4f}}.h5' if args.compute_val_loss
                                             else f'{args.dataset_type}_{{epoch:02d}}_{{loss:.4f}}.h5'),
                                             verbose=0, save_weights_only=True)
@@ -1139,14 +1144,14 @@ class EfficientDetModel():
         else:
             workers = multiprocessing.cpu_count()
 
-        self.keras_model.fit_generator(
+        self.model.fit_generator(
             train_generator,
             initial_epoch=self.epoch,
             epochs=epochs,
-            steps_per_epoch=config.STEPS_PER_EPOCH,
+            steps_per_epoch=1000,
             callbacks=callbacks,
-            validation_data=val_generator,
-            validation_steps=config.VALIDATION_STEPS,
+            validation_data=None,
+            #validation_steps=None,
             max_queue_size=100,
             workers=workers,
             use_multiprocessing=True,
@@ -1154,7 +1159,14 @@ class EfficientDetModel():
         self.epoch = max(self.epoch, epochs)
 
 if __name__ == '__main__':
-    model = EfficientDetModel(0)
-    x,y = model.efficientdet()
+    models = EfficientDetModel(0)
+    models.compile()
     #x.train()
+    train_model = models.model
+    
+    from generators.coco_ins import CocoDataset
+    train_dataset = CocoDataset('data/sample_val', ['train', 'val'])
+    train_generator = data_generator(train_dataset, shuffle=True,
+                                         phi=0, batch_size=1)
+    train_model.fit_generator(train_generator, epochs=1, steps_per_epoch=1000)
     
