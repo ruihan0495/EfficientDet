@@ -317,3 +317,4 @@ def random_transform_generator(prng=None, **kwargs):
 
     while True:
         yield random_transform(prng=prng, **kwargs)
+

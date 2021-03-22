@@ -25,6 +25,8 @@ from utils.graph_funcs import trim_zeros_graph, overlaps_graph, batch_slice
 from utils.graph_funcs import norm_boxes_graph, denorm_boxes_graph
 from losses import focal, smooth_l1
 
+from utils.helper import norm_boxes, resize
+
 w_bifpns = [64, 88, 112, 160, 224, 288, 384]
 d_bifpns = [3, 4, 5, 6, 7, 7, 8]
 d_heads = [3, 3, 3, 4, 4, 4, 5]
@@ -725,7 +727,7 @@ class DetectionTargetLayer(KL.Layer):
         return [None, None, None, None]
 
 def data_generator(dataset, shuffle=True, phi=0,
-                   batch_size=1, mask_shape=[28, 28]):
+                   batch_size=1, mask_shape=(28, 28)):
     '''
     '''
     b = 0  # batch item index
@@ -748,11 +750,12 @@ def data_generator(dataset, shuffle=True, phi=0,
                 np.random.shuffle(image_ids)
 
             temp_images, annotations_group = dataset.compute_inputs_targets(group)
+
             # TODO: use map function to make this more efficient
             images = []
             for image in temp_images:
                 images.append(np.squeeze(image, axis=0))
-            
+
             # Skip images that have no instances. This can happen in cases
             # where we train on a subset of classes and the image doesn't
             # have any of the classes we care about.
@@ -768,12 +771,13 @@ def data_generator(dataset, shuffle=True, phi=0,
             boxes_batch = np.zeros((batch_size, MAX_INSTANCES, 4), dtype=np.float32)
             labels_batch = np.zeros((batch_size, MAX_INSTANCES), dtype=np.float32)
             for index, annotations in enumerate(annotations_group):
-                # TODO: reshape annotation['masks'] into [num_instances, 28, 28]
-                #gt_masks = annotations['masks']
+                # TODO: apply transformation to gt_masks
+                gt_masks = annotations['masks']
+                gt_masks = np.moveaxis(np.round(resize(gt_masks, mask_shape)).astype(bool), -1, 0)
                 gt_boxes = annotations['bboxes']
+                gt_boxes = norm_boxes(gt_boxes, (image_size, image_size))
                 gt_labels = annotations['labels']
-                # TODO: normalize gt_boxes np
-                #masks_batch[index, :gt_masks.shape[0], :, :] = gt_masks
+                masks_batch[index, :gt_masks.shape[0], :, :] = gt_masks
                 boxes_batch[index, :gt_boxes.shape[0], :] = gt_boxes
                 labels_batch[index, :gt_labels.shape[0]] = gt_labels
             inputs = [images, outs[0], outs[1], masks_batch, boxes_batch, labels_batch]

@@ -200,6 +200,7 @@ class CocoDataset(BaseDataset):
         # check validity of annotations
         image_group, annotations_group = self.filter_annotations(image_group, annotations_group, group)
 
+        #TODO: transform mask 
         # randomly apply visual effect
         image_group, annotations_group = self.random_visual_effect_group(image_group, annotations_group)
 
