@@ -138,6 +138,7 @@ class CocoDataset(BaseDataset):
         """
         rle = self.annToRLE(ann, height, width)
         m = maskUtils.decode(rle)
+        #print(np.any(m)>0)
         return m
 
     def load_image(self, image_index):

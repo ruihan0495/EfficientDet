@@ -784,7 +784,6 @@ def data_generator(dataset, shuffle=True, phi=0,
             targets = []
 
             outputs = targets
-            print("load images shape", images[0].shape)
             yield inputs, outputs
 
             # start a new batch

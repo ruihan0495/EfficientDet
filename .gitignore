@@ -115,3 +115,5 @@ tests/
 val2017*
 *.txt
 results/
+test_effects/
+.vscode/
