@@ -262,16 +262,16 @@ class MiscEffectMask:
 
     def __call__(self, image, annotations):
         image, annotations = multi_scale(image, annotations, prob=self.multi_scale_prob)
-        print("pass multi_scale")
+        #print("pass multi_scale")
         image, annotations = rotate(image, annotations, prob=self.rotate_prob, border_value=self.border_value)
-        print("pass rotate")
+        #print("pass rotate")
         image, annotations = flipx(image, annotations, prob=self.flip_prob)
-        print("pass flipx")
+        #print("pass flipx")
         image, annotations = crop(image, annotations, prob=self.crop_prob)
-        print("pass crop")
+        #print("pass crop")
         image, annotations = translate(image, annotations, prob=self.translate_prob, border_value=self.border_value)
-        print("pass translate")
-        print(image.shape, annotations['masks'][0].shape)
+        #print("pass translate")
+        #print(image.shape, annotations['masks'][0].shape)
         return image, annotations
 
 

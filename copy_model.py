@@ -719,33 +719,23 @@ def data_generator(dataset, shuffle=True, phi=0,
             if shuffle and image_index == 0:
                 np.random.shuffle(image_ids)
 
-            images, outs, annotations_group = dataset.compute_inputs_targets(group)
+            images, outs = dataset.compute_inputs_targets(group)
             images = np.squeeze(images, axis=0)
+
+            # TODO: use map function to make this more efficient
+            '''
+            images = []
+            for image in temp_images:
+                images.append(np.squeeze(image, axis=0))'''
+
             # Skip images that have no instances. This can happen in cases
             # where we train on a subset of classes and the image doesn't
             # have any of the classes we care about.
             #if not np.any(annotations_group['labels'] > 0):
             #    continue
 
-            # first stage bbox Targets
-            image_size = image_sizes[phi]
-            #outs = build_bbox_target(annotations_group, images, num_classes, image_size, detect_quadrangle=False)
-
-            # mask targets [batch, max_instances, 28, 28] and second state bbox targets [batch, max_instaces, 4]
-            masks_batch = np.zeros((batch_size, MAX_INSTANCES, mask_shape[0], mask_shape[1]), dtype=np.float32)
-            boxes_batch = np.zeros((batch_size, MAX_INSTANCES, 4), dtype=np.float32)
-            labels_batch = np.zeros((batch_size, MAX_INSTANCES), dtype=np.float32)
-            for index, annotations in enumerate(annotations_group):
-                # TODO: apply transformation to gt_masks
-                gt_masks = annotations['masks']
-                gt_masks = np.moveaxis(np.round(resize(gt_masks, mask_shape)).astype(bool), -1, 0)
-                gt_boxes = annotations['bboxes']
-                gt_boxes = norm_boxes(gt_boxes, (image_size, image_size))
-                gt_labels = annotations['labels']
-                masks_batch[index, :gt_masks.shape[0], :, :] = gt_masks
-                boxes_batch[index, :gt_boxes.shape[0], :] = gt_boxes
-                labels_batch[index, :gt_labels.shape[0]] = gt_labels
-            inputs = [images, outs[0], outs[1], masks_batch, boxes_batch, labels_batch]
+            
+            inputs = [images, outs[0], outs[1]]
             targets = []
 
             outputs = targets
@@ -865,12 +855,6 @@ class EfficientDetModel():
                     score_threshold=0.01, detect_quadrangle=False, anchor_parameters=None, separable_conv=True,
                     mask_shape=[28,28]):
         image_input = KL.Input(self.input_shape, name="image_input")
-        '''
-        w_bifpn = w_bifpns[phi]
-        d_bifpn = d_bifpns[phi]
-        w_head = w_bifpn
-        d_head = d_heads[phi]
-        '''
         features = self.backbone_cls(input_tensor=image_input, freeze_bn=freeze_bn)
         if weighted_bifpn:
             fpn_features = features
@@ -889,7 +873,6 @@ class EfficientDetModel():
         regression = [box_net([feature, i]) for i, feature in enumerate(fpn_features)]
         regression = KL.Concatenate(axis=1, name='regression')(regression)
         # regression has shpae [batch, num_detections, 4]
-        print("classification shape", classification.shape)
 
         # apply predicted regression to anchors
         anchors = anchors_for_shape((self.input_size, self.input_size), anchor_params=anchor_parameters)
@@ -916,7 +899,7 @@ class EfficientDetModel():
             )([boxes, classification])
 
         #norm_boxes = DetectionLayer(DETECTION_MIN_CONFIDENCE, DETECTION_MAX_INSTANCES, DETECTION_NMS_THRESHOLD)([boxes, classification])
-
+        '''
         output_boxes = detections[0]
         norm_boxes = norm_boxes_graph(output_boxes, K.shape(image_input)[1:3])
         roi_masks = build_fpn_mask_graph(norm_boxes, fpn_features, self.input_size, 13, 14) #[batch, num_proposals,h,w,num_classes]
@@ -939,18 +922,18 @@ class EfficientDetModel():
 
         # build losses
         #output_rois = KL.Lambda(lambda x: x * 1, name="output_rois")(rois)
-
+        '''
         # Losses
         regression_loss = KL.Lambda(lambda x: smooth_l1(*x), name="regression_loss")([box_target, regression])     
         classification_loss = KL.Lambda(lambda x: focal(*x), name="classification_loss")([class_target, classification]) 
-        mask_loss = KL.Lambda(lambda x: mrcnn_mask_loss_graph(*x), name="mrcnn_mask_loss")(
-                                        [target_mask, target_class_ids, roi_masks])  
+        #mask_loss = KL.Lambda(lambda x: mrcnn_mask_loss_graph(*x), name="mrcnn_mask_loss")(
+        #                                [target_mask, target_class_ids, roi_masks])  
 
 
 
-        model = models.Model(inputs=[image_input, class_target, box_target, gt_masks, gt_boxes, gt_labels], 
-                             outputs=[classification, regression, roi_masks, 
-                                      regression_loss, classification_loss, mask_loss], name='efficientdet')
+        model = models.Model(inputs=[image_input, class_target, box_target], 
+                             outputs=[classification, regression, 
+                                      regression_loss, classification_loss], name='efficientdet')
         prediction_model = models.Model(inputs=[image_input], 
                                         outputs=detections, name='efficientdet_p')
         return model, prediction_model
@@ -960,7 +943,7 @@ class EfficientDetModel():
         self.model._losses = []
         self.model._per_input_losses = {}
         loss_names = [
-            "regression_loss", "classification_loss", "mrcnn_mask_loss"]
+            "regression_loss", "classification_loss"]
         for name in loss_names:
             layer = self.model.get_layer(name)
             if layer.output in self.model.losses:
@@ -1134,9 +1117,11 @@ if __name__ == '__main__':
     
     from generators.coco_ins import CocoDataset
     from augmentor.mask_misc import MiscEffectMask
-    misc_effect = MiscEffectMask()
-    train_dataset = CocoDataset('data/sample_val', ['train', 'val'], misc_effect=misc_effect)
+    from augmentor.misc import MiscEffect
+    misc_effect_1 = MiscEffectMask()
+    misc_effect_2 = MiscEffect()
+    train_dataset = CocoDataset('data/sample_val', ['train', 'val'], misc_effect=misc_effect_2)
     train_generator = data_generator(train_dataset, shuffle=True,
-                                         phi=0, batch_size=1)
+                                         phi=0, batch_size=2)
     train_model.fit_generator(train_generator, epochs=1, steps_per_epoch=100)
     

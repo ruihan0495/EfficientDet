@@ -10,10 +10,10 @@ train_generator = CocoDataset('data/sample_val', ['train', 'val'], misc_effect=m
 #train_generator = data_generator(train_dataset, shuffle=True,
 #                                        phi=0, batch_size=1)
 
-for i in range(train_generator.size()):
-    image = train_generator.load_image(i)
+for j in range(train_generator.size()):
+    image = train_generator.load_image(j)
     image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-    annotations = train_generator.load_annotations(i)
+    annotations = train_generator.load_annotations(j)
     boxes = annotations['bboxes'].astype(np.int32)
     masks = annotations['masks'].astype(np.int32)
     #quadrangles = annotations['quadrangles'].astype(np.int32)
@@ -40,4 +40,16 @@ for i in range(train_generator.size()):
     for i,mask in enumerate(masks):
         cv2.imwrite('test_effects/scale_mask_{}.jpg'.format(i), mask*255)
 
+    image, annotations_group = train_generator.compute_inputs_targets([j])
+    image = np.squeeze(image[0])
+    annotations = annotations_group[0]
+    masks = annotations['masks']
+    boxes = annotations['bboxes']
+    labels = annotations['labels']
+    for box in boxes:
+        cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), (0, 255, 0), 1)
+    cv2.imwrite('test_effects/post_image.jpg', image*255)
+    for i,mask in enumerate(masks):
+        cv2.imwrite('test_effects/post_mask_{}.jpg'.format(i), mask*255)
+    print(labels)
     break

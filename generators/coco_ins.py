@@ -186,6 +186,7 @@ class CocoDataset(BaseDataset):
 
         return annotations
   
+    '''
     def compute_inputs_targets(self, group):
         """
         Compute inputs and target outputs for the network.
@@ -229,24 +230,11 @@ class CocoDataset(BaseDataset):
 
         # compute network targets
         # pad zeros until reach the maximum instances per image
-        '''
+
         classification_targets = [annotations['labels'] for annotations in annotations_group]
         regression_targets = [annotations['bboxes'] for annotations in annotations_group]
 
-
-        labels_batch = np.zeros((len(classification_targets), MAX_INSTANCES), dtype=np.float32)
-        regression_batch = np.zeros((len(regression_targets), MAX_INSTANCES, 4), dtype=np.float32)
-        for index, (c_target, r_target) in enumerate(zip(classification_targets, regression_targets)):
-            if c_target.shape[0] < MAX_INSTANCES:
-                num_pads = MAX_INSTANCES - c_target.shape[0]
-                neg_padding = np.zeros((num_pads, ))-1
-                c_target = np.concatenate((c_target, neg_padding), axis=None)
-                zero_padding = np.zeros((num_pads, 4))
-                r_target = np.concatenate((r_target, zero_padding), axis=0)
-            labels_batch[index] = c_target
-            regression_targets[index] = r_target
-        '''
-        return inputs, annotations_group
+        return inputs, annotations_group    '''
 
 
        

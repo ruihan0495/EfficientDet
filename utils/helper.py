@@ -38,7 +38,7 @@ def resize(image, output_shape, order=1, mode='constant', cval=0, clip=True,
     of skimage. This solves the problem by using different parameters per
     version. And it provides a central place to control resizing defaults.
     """
-    image = np.moveaxis(image, 0, -1)
+    image = np.moveaxis(image, 0, -1).astype(np.float32)
     return skimage.transform.resize(
             image, output_shape,
             order=order, mode=mode, cval=cval, clip=clip,

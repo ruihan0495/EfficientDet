@@ -115,37 +115,6 @@ def anchor_targets_bbox(
                 regression_batch[index, :, 8] = annotations['ratios'][argmax_overlaps_inds]
             # reshape masks to target mask shape
             # write a function similar to bbox_transform
-            '''
-            roi_masks = annotations['masks'][argmax_overlaps_inds[positive_indices], :, :]
-            boxes = regression_batch[index][positive_indices][:,:4]
-            box_ids = tf.range(0, roi_masks.shape[0])
-    
-            roi_masks = tf.expand_dims(roi_masks, -1)
-            roi_masks = tf.image.crop_and_resize(tf.cast(roi_masks, tf.float32), 
-                                                boxes,
-                                                box_ids,
-                                                mask_shape)
-            roi_masks = tf.squeeze(roi_masks, -1)
-            roi_masks = tf.round(roi_masks)
-
-            index_num = []
-            j = 0
-            for i in positive_indices:
-                if i:
-                    index_num.append(j)
-                j+=1
-
-            indices = [[index, i] for i in index_num]
-
-            #mask_batch = tf.tensor_scatter_nd_update(mask_batch, indices, roi_masks)
-            #mask_batch = mask_batch.numpy()
-            #print(roi_masks.shape)
-            # target_class_ids [batch, num_anchors]
-            #print(argmax_overlaps_inds.shape)
-  
-            #mask_batch[index, positive_indices, :, :] = roi_masks
-        '''
-
         # ignore anchors outside of image
         if image.shape:
             anchors_centers = np.vstack([(anchors[:, 0] + anchors[:, 2]) / 2, (anchors[:, 1] + anchors[:, 3]) / 2]).T
@@ -389,17 +358,4 @@ def bbox_transform(anchors, gt_boxes, scale_factors=None):
     targets = np.stack([ty, tx, th, tw], axis=1)
     return targets
 
-def mask_transform(anchors, gt_masks, scale_factors=None):
-    print("gt_masks shape", gt_masks.shape)
-    wa = anchors[:, 2] - anchors[:, 0]
-    ha = anchors[:, 3] - anchors[:, 1]
-    cxa = anchors[:, 0] + wa / 2.
-    cya = anchors[:, 1] + ha / 2.
 
-    w = gt_boxes[:, 2] - gt_boxes[:, 0]
-    h = gt_boxes[:, 3] - gt_boxes[:, 1]
-    cx = gt_boxes[:, 0] + w / 2.
-    cy = gt_boxes[:, 1] + h / 2.
-    
-
-    return 

@@ -285,6 +285,12 @@ class BaseDataset(object):
 
         # apply resizing to annotations too
         annotations['bboxes'] *= scale
+        masks = annotations['masks']
+        new_masks = []
+        for mask in masks:
+            resized_mask = self.preprocess_mask(mask)
+            new_masks.append(resized_mask)
+        annotations['masks'] = np.array(new_masks, dtype=bool)
         if self.detect_quadrangle:
             annotations['quadrangles'] *= scale
         return image, annotations
@@ -363,7 +369,7 @@ class BaseDataset(object):
         )
         return list(batches_targets)
 
-    def compute_inputs_targets(self, group, debug=False):
+    def compute_inputs_targets(self, group):
         """
         Compute inputs and target outputs for the network.
         """
@@ -404,10 +410,7 @@ class BaseDataset(object):
         # compute network targets
         targets = self.compute_targets(image_group, annotations_group)
 
-        if debug:
-            return inputs, targets, annotations_group
-
-        return inputs, targets
+        return inputs, targets, annotations_group
 
     def __len__(self):
         """
@@ -419,6 +422,7 @@ class BaseDataset(object):
     def preprocess_image(self, image):
         # image, RGB
         image_height, image_width = image.shape[:2]
+        #print("image shape", image.shape)
         if image_height > image_width:
             scale = self.image_size / image_height
             resized_height = self.image_size
@@ -439,6 +443,25 @@ class BaseDataset(object):
         pad_w = self.image_size - resized_width
         image = np.pad(image, [(0, pad_h), (0, pad_w), (0, 0)], mode='constant')
         return image, scale
+
+    def preprocess_mask(self, image):
+        #print("mask shape", image.shape)
+        image = image.astype(np.float32)
+        image_height, image_width = image.shape[:2]
+        if image_height > image_width:
+            scale = self.image_size / image_height
+            resized_height = self.image_size
+            resized_width = int(image_width * scale)
+        else:
+            scale = self.image_size / image_width
+            resized_height = int(image_height * scale)
+            resized_width = self.image_size
+
+        image = cv2.resize(image, (resized_width, resized_height))
+        pad_h = self.image_size - resized_height
+        pad_w = self.image_size - resized_width
+        image = np.pad(image, [(0, pad_h), (0, pad_w)], mode='constant')
+        return image
 
     def get_augmented_data(self, group):
         """
