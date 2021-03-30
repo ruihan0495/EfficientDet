@@ -148,7 +148,7 @@ def flipx(image, annotations, prob=0.5):
             quadrangles[:, 3, 0] = w - 1 - tmp[:, 1, 0]
             quadrangles[:, 3, 1] = tmp[:, 1, 1]
         masks = annotations['masks']
-        annotations['masks'] = masks[:,::-1,:]
+        annotations['masks'] = masks[:,:,::-1]
     return image, annotations
 
 

@@ -23,10 +23,10 @@ for j in range(train_generator.size()):
     for i,mask in enumerate(masks):
         cv2.imwrite('test_effects/load_mask_{}.jpg'.format(i), mask*255)
     
-    src_image = image.copy()
+    #src_image = image.copy()
     # cv2.namedWindow('src_image', cv2.WINDOW_NORMAL)
     #cv2.imshow('src_image', src_image)
-    image, annotations = misc_effect(image, annotations)
+    #image, annotations = misc_effect(image, annotations)
     #image, annotations = multi_scale(image, annotations, prob=1.)
     #image = image.copy()
     #boxes = annotations['bboxes'].astype(np.int32)
@@ -37,10 +37,10 @@ for j in range(train_generator.size()):
     #cv2.drawContours(image, quadrangles, -1, (255, 255, 0), 1)
     #cv2.namedWindow('image', cv2.WINDOW_NORMAL)
     #cv2.imshow('image', image)
-    for i,mask in enumerate(masks):
-        cv2.imwrite('test_effects/scale_mask_{}.jpg'.format(i), mask*255)
+    #for i,mask in enumerate(masks):
+    #    cv2.imwrite('test_effects/scale_mask_{}.jpg'.format(i), mask*255)
 
-    image, annotations_group = train_generator.compute_inputs_targets([j])
+    image, tagets, annotations_group = train_generator.compute_inputs_targets([j])
     image = np.squeeze(image[0])
     annotations = annotations_group[0]
     masks = annotations['masks']

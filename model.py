@@ -25,7 +25,8 @@ from utils.graph_funcs import trim_zeros_graph, overlaps_graph, batch_slice
 from utils.graph_funcs import norm_boxes_graph, denorm_boxes_graph
 from losses import focal, smooth_l1
 
-from utils.helper import norm_boxes, resize
+from utils.helper import norm_boxes
+import os
 
 w_bifpns = [64, 88, 112, 160, 224, 288, 384]
 d_bifpns = [3, 4, 5, 6, 7, 7, 8]
@@ -36,8 +37,8 @@ backbones = [EfficientNetB0, EfficientNetB1, EfficientNetB2,
 
 MOMENTUM = 0.997
 EPSILON = 1e-4
-MAX_INSTANCES = 100
-TRAIN_ROIS_PER_IMAGE = 200
+MAX_INSTANCES = 10
+TRAIN_ROIS_PER_IMAGE = 100
 DETECTION_MAX_INSTANCES = 100
 # Minimum probability value to accept a detected instance
 # ROIs below this threshold are skipped
@@ -566,8 +567,8 @@ def build_mask_target_graph(rois,
                             b_gt_boxes, 
                             b_gt_masks,
                             gt_class_ids,
-                            negative_overlap=0.4, 
-                            positive_overlap=0.5,
+                            negative_overlap=0, 
+                            positive_overlap=0,
                             num_classes=13,
                             mask_shape=[28,28]):
     '''
@@ -586,7 +587,7 @@ def build_mask_target_graph(rois,
     Note: Returned arrays might be zero padded if not enough target ROIs.
     '''
     print("b_gt_boxes", b_gt_boxes.shape)
-
+    rois, _ = trim_zeros_graph(rois, name="trim_rois")
     b_gt_boxes, non_zeros = trim_zeros_graph(b_gt_boxes, name='trim_gt_boxes')
     b_gt_masks = tf.gather(b_gt_masks, tf.where(non_zeros)[:, 0], axis=0,
                         name="trim_gt_masks")   
@@ -603,12 +604,13 @@ def build_mask_target_graph(rois,
     # 2. Negative ROIs are those with < 0.5 with every GT box. Skip crowds.
     negative_indices = tf.where((roi_iou_max < negative_overlap))[:, 0]
 
-    positive_count = int(TRAIN_ROIS_PER_IMAGE * 0.33)
+    positive_count = int(TRAIN_ROIS_PER_IMAGE * 0.3)
     positive_indices = tf.random_shuffle(positive_indices)[:positive_count]
     positive_count = tf.shape(positive_indices)[0]
     # Negative ROIs. Add enough to maintain positive:negative ratio.
-    r = 1.0 / 0.33
-    negative_count = tf.cast(r * tf.cast(positive_count, tf.float32), tf.int32) - positive_count
+    #r = 1.0 / 0.3
+    negative_count = int(TRAIN_ROIS_PER_IMAGE * 0.6)
+    #negative_count = tf.cast(r * tf.cast(positive_count, tf.float32), tf.int32) - positive_count
     negative_indices = tf.random_shuffle(negative_indices)[:negative_count]
 
     positive_overlaps = tf.gather(overlaps, positive_indices)
@@ -634,12 +636,14 @@ def build_mask_target_graph(rois,
     # Append negative ROIs and pad bbox deltas and masks that
     # are not used for negative ROIs with zeros.
     N = tf.shape(negative_rois)[0]
-    P = tf.maximum(TRAIN_ROIS_PER_IMAGE - tf.shape(rois)[0], 0)
+    NP = tf.shape(positive_rois)[0]
+    P = tf.maximum(TRAIN_ROIS_PER_IMAGE - N - NP, 0)
     rois = tf.concat([positive_rois, negative_rois], axis=0)
+    #print("before", rois.shape)
     rois = tf.pad(rois, [(0, P), (0, 0)])
-    roi_gt_class_ids = tf.pad(roi_gt_class_ids, [(0, N + P)])   
+    roi_gt_class_ids = tf.pad(roi_gt_class_ids, [(0, N + P)], mode='CONSTANT', constant_values=-1)   
     b_masks = tf.pad(b_masks, [[0, N + P], (0, 0), (0, 0)])
-
+    print("in function", N+P, rois.shape, b_masks.shape, roi_gt_class_ids.shape)
     return rois, roi_gt_class_ids, b_masks
 
 class DetectionTargetLayer(KL.Layer):
@@ -674,7 +678,7 @@ class DetectionTargetLayer(KL.Layer):
         gt_boxes = inputs[2]
         gt_masks = inputs[3]
 
-        print(proposals.shape, gt_class_ids.shape, gt_boxes.shape, gt_masks.shape)
+        print('shapes', proposals.shape, gt_class_ids.shape, gt_boxes.shape, gt_masks.shape)
 
         # Slice the batch and run a graph for each slice
         # TODO: Rename target_bbox to target_deltas for clarity
@@ -696,8 +700,9 @@ class DetectionTargetLayer(KL.Layer):
     def compute_mask(self, inputs, mask=None):
         return [None, None, None, None]
 
+import cv2
 def data_generator(dataset, shuffle=True, phi=0,
-                   batch_size=1, mask_shape=(28, 28)):
+                   batch_size=1):
     '''
     '''
     b = 0  # batch item index
@@ -728,19 +733,22 @@ def data_generator(dataset, shuffle=True, phi=0,
             #    continue
 
             # first stage bbox Targets
-            image_size = image_sizes[phi]
             #outs = build_bbox_target(annotations_group, images, num_classes, image_size, detect_quadrangle=False)
 
             # mask targets [batch, max_instances, 28, 28] and second state bbox targets [batch, max_instaces, 4]
-            masks_batch = np.zeros((batch_size, MAX_INSTANCES, mask_shape[0], mask_shape[1]), dtype=np.float32)
+            masks_batch = np.zeros((batch_size, MAX_INSTANCES, images.shape[1], images.shape[2]), dtype=np.float32)
             boxes_batch = np.zeros((batch_size, MAX_INSTANCES, 4), dtype=np.float32)
             labels_batch = np.zeros((batch_size, MAX_INSTANCES), dtype=np.float32)
             for index, annotations in enumerate(annotations_group):
                 # TODO: apply transformation to gt_masks
                 gt_masks = annotations['masks']
-                gt_masks = np.moveaxis(np.round(resize(gt_masks, mask_shape)).astype(bool), -1, 0)
+                # for debug
                 gt_boxes = annotations['bboxes']
-                gt_boxes = norm_boxes(gt_boxes, (image_size, image_size))
+                gt_boxes = norm_boxes(gt_boxes, (images.shape[1], images.shape[2]))
+                '''
+                for i,mask in enumerate(gt_masks):
+                    cv2.imwrite('test_effects/post_mask_{}.jpg'.format(i), mask*255)
+                    print("mask shape", mask.shape)'''
                 gt_labels = annotations['labels']
                 masks_batch[index, :gt_masks.shape[0], :, :] = gt_masks
                 boxes_batch[index, :gt_boxes.shape[0], :] = gt_boxes
@@ -750,7 +758,6 @@ def data_generator(dataset, shuffle=True, phi=0,
 
             outputs = targets
             yield inputs, outputs
-
             # start a new batch
             b = 0
         
@@ -775,7 +782,7 @@ def build_fpn_mask_graph(rois, feature_maps, image_size, num_classes,
     # Shape: [batch, num_rois, MASK_POOL_SIZE, MASK_POOL_SIZE, channels]
     x = ROIAlignLayer([pool_size, pool_size],
                         name="roi_align_mask")((rois, image_size, feature_maps))
-
+    # x [1, num_rois, 14, 14, 64]
     # Conv layers
     x = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same"),
                            name="mrcnn_mask_conv1")(x)
@@ -805,7 +812,7 @@ def build_fpn_mask_graph(rois, feature_maps, image_size, num_classes,
                            name="mrcnn_mask_deconv")(x)
     x = KL.TimeDistributed(KL.Conv2D(num_classes, (1, 1), strides=1, activation="sigmoid"), 
                            name='mask')(x)
-    #print("pool mask feature map size", x.shape)
+    print("pool mask feature map size", x.shape)
     return x
 
 
@@ -817,6 +824,7 @@ def mrcnn_mask_loss_graph(target_masks, target_class_ids, pred_masks):
     pred_masks: [batch, proposals, height, width, num_classes] float32 tensor
                 with values from 0 to 1.
     """
+    print("target_class_ids", target_class_ids.shape)
     # Reshape for simplicity. Merge first two dimensions into one.
     target_class_ids = K.reshape(target_class_ids, (-1,))
     mask_shape = tf.shape(target_masks)
@@ -829,7 +837,7 @@ def mrcnn_mask_loss_graph(target_masks, target_class_ids, pred_masks):
 
     # Only positive ROIs contribute to the loss. And only
     # the class specific mask of each ROI.
-    positive_ix = tf.where(target_class_ids > 0)[:, 0]
+    positive_ix = tf.where(target_class_ids >= 0)[:, 0]
     positive_class_ids = tf.cast(
         tf.gather(target_class_ids, positive_ix), tf.int64)
     indices = tf.stack([positive_ix, positive_class_ids], axis=1)
@@ -862,8 +870,7 @@ class EfficientDetModel():
         self.model, self.p_model = self.efficientdet()
 
     def efficientdet(self, num_classes=13, num_anchors=9, weighted_bifpn=False, freeze_bn=False,
-                    score_threshold=0.01, detect_quadrangle=False, anchor_parameters=None, separable_conv=True,
-                    mask_shape=[28,28]):
+                    score_threshold=0.01, detect_quadrangle=False, anchor_parameters=None, separable_conv=True):
         image_input = KL.Input(self.input_shape, name="image_input")
         '''
         w_bifpn = w_bifpns[phi]
@@ -915,27 +922,17 @@ class EfficientDetModel():
                 score_threshold=score_threshold
             )([boxes, classification])
 
-        #norm_boxes = DetectionLayer(DETECTION_MIN_CONFIDENCE, DETECTION_MAX_INSTANCES, DETECTION_NMS_THRESHOLD)([boxes, classification])
-
+        
         output_boxes = detections[0]
         norm_boxes = norm_boxes_graph(output_boxes, K.shape(image_input)[1:3])
-        roi_masks = build_fpn_mask_graph(norm_boxes, fpn_features, self.input_size, 13, 14) #[batch, num_proposals,h,w,num_classes]
-        print("shape of roi_masks", roi_masks.shape)
-        
-        # apply nms on boxes???
-        # predict masks base on boxes
-        # TODO: normalize regression, nms on regression
-       
-        # TODO: generate target TRAIN_ROIS_PER_IMAGE rois 
-        #target_rois = .. shape[batch, num_rois, 4]
-        #target_rois = KL.Input((100, 4))
-
-        gt_masks = KL.Input((MAX_INSTANCES, mask_shape[0], mask_shape[1]), name="gt_masks")
+        gt_masks = KL.Input((MAX_INSTANCES, self.input_shape[0], self.input_shape[1]), name="gt_masks")
         gt_boxes = KL.Input((MAX_INSTANCES, 4), name="gt_boxes")
         gt_labels = KL.Input((MAX_INSTANCES), name="gt_labels")
 
         rois, target_class_ids, target_mask = DetectionTargetLayer(name="proposal_targets")([
                     norm_boxes, gt_labels, gt_boxes, gt_masks])
+        roi_masks = build_fpn_mask_graph(rois, fpn_features, self.input_size, 13, 14) #[batch, num_proposals,h,w,num_classes]
+        #print("shape of roi_masks", roi_masks.shape)
 
         # build losses
         #output_rois = KL.Lambda(lambda x: x * 1, name="output_rois")(rois)
@@ -949,10 +946,10 @@ class EfficientDetModel():
 
 
         model = models.Model(inputs=[image_input, class_target, box_target, gt_masks, gt_boxes, gt_labels], 
-                             outputs=[classification, regression, roi_masks, 
+                             outputs=[classification, regression, roi_masks,
                                       regression_loss, classification_loss, mask_loss], name='efficientdet')
-        prediction_model = models.Model(inputs=[image_input], 
-                                        outputs=detections, name='efficientdet_p')
+        prediction_model = models.Model(inputs=[image_input, gt_masks, gt_boxes, gt_labels], 
+                                        outputs=[detections, roi_masks], name='efficientdet_p')
         return model, prediction_model
 
     def compile(self,learning_rate=1e-3):
@@ -1129,14 +1126,23 @@ class EfficientDetModel():
 if __name__ == '__main__':
     models = EfficientDetModel(0)
     models.compile()
-    #x.train()
     train_model = models.model
-    
     from generators.coco_ins import CocoDataset
     from augmentor.mask_misc import MiscEffectMask
     misc_effect = MiscEffectMask()
     train_dataset = CocoDataset('data/sample_val', ['train', 'val'], misc_effect=misc_effect)
     train_generator = data_generator(train_dataset, shuffle=True,
-                                         phi=0, batch_size=1)
-    train_model.fit_generator(train_generator, epochs=1, steps_per_epoch=100)
+                                         phi=0, batch_size=2)
+    checkpoint = keras.callbacks.ModelCheckpoint(
+            os.path.join(
+                'checkpoints',
+                'deepfashion.h5'
+            ),
+            verbose=1,
+            save_weights_only=True,
+            # save_best_only=True,
+            # monitor="mAP",
+            # mode='max'
+        )
+    train_model.fit_generator(train_generator, epochs=1, steps_per_epoch=1000, callbacks=[checkpoint])
     
